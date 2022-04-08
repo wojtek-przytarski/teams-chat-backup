@@ -15,6 +15,10 @@ const fsAPI = {
 const FILENAME_MATCH = /messages-([0-9]{1,})\.json/;
 const UPLOADED_IMAGE_MATCH = /https:\/\/graph.microsoft.com\/beta\/chats([^"]*)/g;
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 class Backup {
   constructor ({ chatId, authToken, target }) {
     this.target = target;
@@ -58,6 +62,16 @@ class Backup {
     });
   }
 
+  async getMessagesForPage(url) {
+    try {
+      return await this.instance.get(url);
+    } catch {
+      console.log("Rate limit exceeded. Retrying in 5s...");
+      await sleep(5000);
+      return await this.getMessagesForPage(url);
+    }
+  }
+
   async getMessages () {
     // URL to first page (most recent messages)
     let url = `https://graph.microsoft.com/beta/me/chats/${this.chatId}/messages`;
@@ -67,7 +81,7 @@ class Backup {
       const pageNum = `0000${page++}`.slice(-5);
 
       console.log(`retrieve page ${pageNum}`);
-      const res = await this.instance.get(url);
+      const res = await this.getMessagesForPage(url);
 
       if (res.data.value && res.data.value.length) {
         await fsAPI.writeFile(
@@ -90,6 +104,20 @@ class Backup {
   async getPages () {
     const filenames = await fsAPI.readdir(this.target);
     return filenames.filter(filename => FILENAME_MATCH.test(filename));
+  }
+
+  async getImage(imageUrl) {
+    try {
+      return await this.instance({
+        method: 'get',
+        url: imageUrl,
+        responseType: 'stream'
+      });
+    } catch {
+      console.log("Rate limit exceeded. Retrying in 5s...");
+      await sleep(5000);
+      return await this.getImage(imageUrl);
+    }
   }
 
   async getImages () {
@@ -115,11 +143,7 @@ class Backup {
 
                 console.log('downloading', targetFilename);
 
-                const res = await this.instance({
-                  method: 'get',
-                  url: imageUrl,
-                  responseType: 'stream'
-                });
+                const res = await this.getImage(imageUrl);
 
                 res.data.pipe(fs.createWriteStream(path.resolve(this.target, targetFilename)));
                 await pipeDone(res.data);
